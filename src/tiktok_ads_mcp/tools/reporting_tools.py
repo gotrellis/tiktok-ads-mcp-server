@@ -1,6 +1,7 @@
 """Reporting tools for TikTok Ads MCP server."""
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -67,8 +68,8 @@ class ReportingTools:
             
             # Validate metrics
             available_metrics = [
-                "impressions", "clicks", "conversion", "spend", "ctr", "cpm", "cpc", 
-                "conversion_rate", "cost_per_conversion", "reach", "frequency",
+                "impressions", "clicks", "conversion", "spend", "ctr", "cpm", "cpc",
+                "conversion_rate", "conversion_rate_v2", "cost_per_conversion", "reach", "frequency",
                 "video_play_actions", "video_watched_2s", "video_watched_6s",
                 "profile_visits", "likes", "comments", "shares", "follows"
             ]
@@ -83,6 +84,14 @@ class ReportingTools:
                     "message": f"Invalid metrics: {', '.join(invalid_metrics)}"
                 }
             
+            # Infer data_level from dimensions
+            if "ad_id" in dimensions:
+                data_level = "AUCTION_AD"
+            elif "adgroup_id" in dimensions:
+                data_level = "AUCTION_ADGROUP"
+            else:
+                data_level = "AUCTION_CAMPAIGN"
+
             # Create report task
             result = await self.client.create_report_task(
                 report_type=report_type,
@@ -90,6 +99,7 @@ class ReportingTools:
                 metrics=metrics,
                 start_date=start_date,
                 end_date=end_date,
+                data_level=data_level,
                 filtering=filtering,
             )
             
@@ -225,38 +235,47 @@ class ReportingTools:
         self,
         entity_type: str = "campaign",
         entity_ids: Optional[List[str]] = None,
-        date_range: str = "last_7_days",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         include_breakdowns: bool = False,
     ) -> Dict[str, Any]:
-        """Generate a quick performance report with standard metrics.
-        
+        """Generate a synchronous performance report using the integrated report API.
+
         Args:
             entity_type: Type of entity (campaign, adgroup, ad)
             entity_ids: List of entity IDs (if None, includes all)
-            date_range: Predefined date range
+            start_date: Start date in YYYY-MM-DD format (defaults to 7 days ago)
+            end_date: End date in YYYY-MM-DD format (defaults to yesterday)
             include_breakdowns: Whether to include demographic breakdowns
-            
+
         Returns:
-            Quick report data
+            Report data directly (synchronous)
         """
         try:
-            # Convert date range to actual dates
+            # Default to last 7 days if not provided
             today = datetime.now()
-            if date_range == "today":
-                start_date = end_date = today.strftime("%Y-%m-%d")
-            elif date_range == "yesterday":
-                yesterday = today - timedelta(days=1)
-                start_date = end_date = yesterday.strftime("%Y-%m-%d")
-            elif date_range == "last_7_days":
+            if not start_date:
                 start_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+            if not end_date:
                 end_date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
-            elif date_range == "last_30_days":
-                start_date = (today - timedelta(days=30)).strftime("%Y-%m-%d")
-                end_date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+
+            # Validate date format
+            try:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                if start_dt > end_dt:
+                    return {"success": False, "error": "start_date must be before end_date"}
+            except ValueError:
+                return {"success": False, "error": "Dates must be in YYYY-MM-DD format"}
+
+            # Map entity_type to data_level
+            if entity_type == "campaign":
+                data_level = "AUCTION_CAMPAIGN"
+            elif entity_type == "adgroup":
+                data_level = "AUCTION_ADGROUP"
             else:
-                start_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
-                end_date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
-            
+                data_level = "AUCTION_AD"
+
             # Standard dimensions and metrics
             if entity_type == "campaign":
                 dimensions = ["campaign_id", "stat_time_day"]
@@ -264,72 +283,56 @@ class ReportingTools:
                 dimensions = ["adgroup_id", "stat_time_day"]
             else:
                 dimensions = ["ad_id", "stat_time_day"]
-            
+
             if include_breakdowns:
                 dimensions.extend(["age", "gender"])
-            
+
             standard_metrics = [
-                "impressions", "clicks", "conversions", "spend",
-                "ctr", "cpm", "cpc", "conversion_rate"
+                "spend", "impressions", "clicks", "ctr",
+                "cpm", "cpc", "conversion", "conversion_rate_v2"
             ]
-            
+
+            # Build params for synchronous report API
+            params = {
+                "report_type": "BASIC",
+                "data_level": data_level,
+                "start_date": start_date,
+                "end_date": end_date,
+                "metrics": standard_metrics,
+                "dimensions": dimensions,
+                "enable_total_metrics": True,
+            }
+
             # Set up filtering if entity IDs provided
-            filtering = {}
             if entity_ids:
                 if entity_type == "campaign":
-                    filtering["campaign_ids"] = entity_ids
+                    field_name = "campaign_ids"
                 elif entity_type == "adgroup":
-                    filtering["adgroup_ids"] = entity_ids
-                elif entity_type == "ad":
-                    filtering["ad_ids"] = entity_ids
-            
-            # Generate the report
-            report_result = await self.generate_report(
-                report_type="BASIC",
-                dimensions=dimensions,
-                metrics=standard_metrics,
-                date_range={"start_date": start_date, "end_date": end_date},
-                filtering=filtering if filtering else None,
-            )
-            
-            if not report_result["success"]:
-                return report_result
-            
-            task_id = report_result["task_id"]
-            
-            # Wait for report completion (with timeout)
-            max_wait_time = 300  # 5 minutes
-            wait_interval = 10   # 10 seconds
-            waited_time = 0
-            
-            while waited_time < max_wait_time:
-                await asyncio.sleep(wait_interval)
-                waited_time += wait_interval
-                
-                status_result = await self.get_report_status(task_id)
-                if not status_result["success"]:
-                    return status_result
-                
-                status = status_result["status_info"]["status"]
-                if status == "SUCCESS":
-                    # Download and return the report
-                    return await self.download_report(task_id)
-                elif status == "FAILED":
-                    return {
-                        "success": False,
-                        "error": "Report generation failed",
-                        "task_id": task_id,
-                        "message": status_result["status_info"].get("error_message", "Unknown error")
-                    }
-            
-            # Timeout reached
+                    field_name = "adgroup_ids"
+                else:
+                    field_name = "ad_ids"
+                params["filtering"] = [{
+                    "field_name": field_name,
+                    "filter_type": "IN",
+                    "filter_value": json.dumps(entity_ids)
+                }]
+
+            # Use synchronous integrated report API
+            result = await self.client._make_request("GET", "report/integrated/get/", params=params)
+
+            report_data = result.get("data", {})
+            rows = report_data.get("list", [])
+
             return {
-                "success": False,
-                "error": "Report generation timeout",
-                "task_id": task_id,
-                "message": "Report generation is taking longer than expected. Please check status manually."
+                "success": True,
+                "entity_type": entity_type,
+                "date_range": f"{start_date} to {end_date}",
+                "metrics": standard_metrics,
+                "row_count": len(rows),
+                "report_data": rows,
+                "message": f"Report generated successfully. {len(rows)} rows returned."
             }
-            
+
         except Exception as e:
             return {
                 "success": False,

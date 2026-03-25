@@ -1,2 +1,25 @@
+# Python
 *.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Secrets
 .env
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Test files
+test_*.py
+
+# Claude Code
+.claude/

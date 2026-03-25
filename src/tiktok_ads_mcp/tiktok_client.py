@@ -103,19 +103,27 @@ class TikTokAdsClient:
                 response = await self.client.get(url + "?" + query_string, headers=headers)
             elif method.upper() == "POST":
                 if files:
-                    # Multipart form upload
+                    # Multipart form upload - serialize list/dict params for query string
+                    serialized_params = {
+                        k: v if isinstance(v, str) else json.dumps(v)
+                        for k, v in common_params.items()
+                    }
                     response = await self.client.post(
                         url,
-                        params=common_params,
+                        params=serialized_params,
                         files=files,
                         data=data or {},
                         headers=headers,
                     )
                 else:
-                    # JSON POST
+                    # JSON POST - serialize list/dict params for query string
+                    serialized_params = {
+                        k: v if isinstance(v, str) else json.dumps(v)
+                        for k, v in common_params.items()
+                    }
                     response = await self.client.post(
                         url,
-                        params=common_params,
+                        params=serialized_params,
                         json=data or {},
                         headers=headers,
                     )
@@ -182,6 +190,13 @@ class TikTokAdsClient:
         }
         return await self._make_request("GET", "adgroup/get/", params=params)
     
+    async def get_adgroup_details(self, adgroup_id: str) -> Dict[str, Any]:
+        """Get details for a specific ad group."""
+        params = {
+            "filtering": json.dumps({"adgroup_ids": [adgroup_id]})
+        }
+        return await self._make_request("GET", "adgroup/get/", params=params)
+
     async def create_adgroup(self, adgroup_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new ad group."""
         return await self._make_request("POST", "adgroup/create/", data=adgroup_data)
@@ -244,6 +259,38 @@ class TikTokAdsClient:
         
         return await self._make_request("GET", "report/integrated/get/", params=params)
     
+    async def get_ads(
+        self,
+        adgroup_id: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 10,
+        page: int = 1,
+    ) -> Dict[str, Any]:
+        """Get ads, optionally filtered by ad group or campaign."""
+        filtering = {}
+        if adgroup_id:
+            filtering["adgroup_ids"] = [adgroup_id]
+        if campaign_id:
+            filtering["campaign_ids"] = [campaign_id]
+        if status:
+            filtering["primary_status"] = status
+
+        params = {
+            "page": page,
+            "page_size": limit,
+        }
+        if filtering:
+            params["filtering"] = json.dumps(filtering)
+        return await self._make_request("GET", "ad/get/", params=params)
+
+    async def get_ad_details(self, ad_id: str) -> Dict[str, Any]:
+        """Get details for a specific ad."""
+        params = {
+            "filtering": json.dumps({"ad_ids": [ad_id]})
+        }
+        return await self._make_request("GET", "ad/get/", params=params)
+
     async def get_ad_creatives(self, limit: int = 10, page: int = 1) -> Dict[str, Any]:
         """Get ad creatives for the advertiser."""
         params = {
@@ -290,12 +337,13 @@ class TikTokAdsClient:
         metrics: List[str],
         start_date: str,
         end_date: str,
+        data_level: str = "AUCTION_CAMPAIGN",
         filtering: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create an asynchronous report generation task."""
         data = {
             "report_type": report_type,
-            "data_level": "AUCTION_CAMPAIGN",  # Default to campaign level
+            "data_level": data_level,
             "dimensions": dimensions,
             "metrics": metrics,
             "start_date": start_date,

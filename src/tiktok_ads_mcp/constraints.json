@@ -1,0 +1,590 @@
+{
+  "_description": "TikTok Ads API v1.3 — Complete constraint rules for campaign creation. Use these to validate the full campaign→adgroup→ad chain before calling the MCP server.",
+
+  "creation_order": [
+    {"step": 1, "action": "upload_assets", "description": "Upload video/image if needed", "outputs": ["video_id", "image_ids"]},
+    {"step": 2, "action": "create_campaign", "description": "Create campaign", "outputs": ["campaign_id"]},
+    {"step": 3, "action": "create_adgroup", "description": "Create ad group (needs campaign_id)", "outputs": ["adgroup_id"]},
+    {"step": 4, "action": "create_ad", "description": "Create ad (needs adgroup_id + assets)", "outputs": ["ad_id"]}
+  ],
+
+  "decision_chain": {
+    "_description": "Each choice constrains the next. Resolve left-to-right.",
+    "order": ["objective_type", "optimization_goal", "billing_event", "bid_type", "bid_price", "pacing", "budget_mode"]
+  },
+
+  "objective_types": {
+    "REACH":           {"description": "Maximize impressions"},
+    "RF_REACH":        {"description": "Reach & Frequency (allowlist only)"},
+    "TRAFFIC":         {"description": "Drive clicks to website/app"},
+    "VIDEO_VIEWS":     {"description": "Maximize video views"},
+    "ENGAGEMENT":      {"description": "Drive community interaction"},
+    "APP_PROMOTION":   {"description": "App installs or retargeting"},
+    "LEAD_GENERATION": {"description": "Collect leads via in-app form"},
+    "PRODUCT_SALES":   {"description": "Catalog/shopping/TikTok Shop sales"}
+  },
+
+  "objective_to_optimization_goals": {
+    "REACH":           ["REACH"],
+    "RF_REACH":        ["REACH"],
+    "TRAFFIC":         ["CLICK", "LANDING_PAGE_VIEW"],
+    "VIDEO_VIEWS":     ["VIDEO_VIEW"],
+    "ENGAGEMENT":      ["REACH", "CLICK", "FOLLOW", "PROFILE_VISIT", "LIKE", "COMMENT", "SHARE"],
+    "APP_PROMOTION":   ["INSTALL", "IN_APP_EVENT", "VALUE"],
+    "LEAD_GENERATION": ["LEAD_GENERATION"],
+    "PRODUCT_SALES":   ["CONVERT", "VALUE", "CLICK", "LANDING_PAGE_VIEW", "INSTALL", "IN_APP_EVENT", "LIVE_VISIT", "PRODUCT_CLICK", "STORE_VISIT"]
+  },
+
+  "goal_to_billing_event": {
+    "REACH":           ["CPM"],
+    "CLICK":           ["CPC"],
+    "LANDING_PAGE_VIEW": ["OCPM"],
+    "VIDEO_VIEW":      ["CPV"],
+    "INSTALL":         ["OCPM"],
+    "IN_APP_EVENT":    ["OCPM"],
+    "VALUE":           ["OCPM"],
+    "CONVERT":         ["OCPM"],
+    "LEAD_GENERATION": ["OCPM"],
+    "FOLLOW":          ["OCPM"],
+    "PROFILE_VISIT":   ["CPC", "OCPM"],
+    "LIKE":            ["OCPM"],
+    "COMMENT":         ["OCPM"],
+    "SHARE":           ["OCPM"],
+    "LIVE_VISIT":      ["OCPM"],
+    "PRODUCT_CLICK":   ["CPC"],
+    "STORE_VISIT":     ["OCPM"]
+  },
+
+  "billing_event_to_bid_types": {
+    "CPM":  ["BID_TYPE_NO_BID", "BID_TYPE_CUSTOM"],
+    "OCPM": ["BID_TYPE_NO_BID", "BID_TYPE_CUSTOM", "BID_TYPE_MAX_COST"],
+    "CPC":  ["BID_TYPE_NO_BID", "BID_TYPE_CUSTOM"],
+    "CPV":  ["BID_TYPE_NO_BID", "BID_TYPE_CUSTOM"]
+  },
+
+  "bid_type_rules": {
+    "BID_TYPE_NO_BID": {
+      "description": "Lowest Cost — system auto-optimizes, no bid cap",
+      "requires_bid_price": false,
+      "bid_price_must_be_empty": true,
+      "allowed_pacing": ["PACING_MODE_SMOOTH"],
+      "forbidden_pacing": ["PACING_MODE_FAST"],
+      "allowed_budget_modes": ["BUDGET_MODE_DAY"],
+      "forbidden_budget_modes": ["BUDGET_MODE_TOTAL"]
+    },
+    "BID_TYPE_CUSTOM": {
+      "description": "Bid Cap — advertiser sets maximum CPA/CPC/CPV bid",
+      "requires_bid_price": true,
+      "bid_price_field": {
+        "OCPM": "conversion_bid_price",
+        "CPC": "bid_price",
+        "CPV": "bid_price",
+        "CPM": "bid_price"
+      },
+      "allowed_pacing": ["PACING_MODE_SMOOTH", "PACING_MODE_FAST"],
+      "allowed_budget_modes": ["BUDGET_MODE_DAY", "BUDGET_MODE_TOTAL"]
+    },
+    "BID_TYPE_MAX_COST": {
+      "description": "Cost Cap — advertiser sets target average CPA (OCPM only)",
+      "requires_bid_price": true,
+      "bid_price_field": {"OCPM": "conversion_bid_price"},
+      "only_with_billing_event": ["OCPM"],
+      "allowed_pacing": ["PACING_MODE_SMOOTH", "PACING_MODE_FAST"],
+      "allowed_budget_modes": ["BUDGET_MODE_DAY", "BUDGET_MODE_TOTAL"]
+    }
+  },
+
+  "invalid_combinations": [
+    {
+      "id": 1,
+      "rule": "BID_TYPE_NO_BID + PACING_MODE_FAST",
+      "error": "Accelerated delivery is not supported with lowest cost bid strategy",
+      "fix": "Use PACING_MODE_SMOOTH or omit pacing"
+    },
+    {
+      "id": 2,
+      "rule": "BID_TYPE_NO_BID + BUDGET_MODE_TOTAL",
+      "error": "Lowest cost only supports daily budgets",
+      "fix": "Use BUDGET_MODE_DAY or change bid_type to BID_TYPE_CUSTOM"
+    },
+    {
+      "id": 3,
+      "rule": "BID_TYPE_NO_BID + bid_price set",
+      "error": "Cannot set bid price with lowest cost strategy",
+      "fix": "Remove bid_price/conversion_bid_price or change bid_type"
+    },
+    {
+      "id": 4,
+      "rule": "BID_TYPE_CUSTOM/MAX_COST + OCPM without conversion_bid_price",
+      "error": "Must provide target cost per conversion",
+      "fix": "Set conversion_bid_price or use BID_TYPE_NO_BID for lowest cost"
+    },
+    {
+      "id": 5,
+      "rule": "BID_TYPE_CUSTOM + CPC/CPV without bid_price",
+      "error": "Must provide max bid amount",
+      "fix": "Set bid_price"
+    },
+    {
+      "id": 6,
+      "rule": "BID_TYPE_MAX_COST + non-OCPM billing",
+      "error": "Cost Cap only works with OCPM billing",
+      "fix": "Change billing_event to OCPM or use BID_TYPE_CUSTOM"
+    },
+    {
+      "id": 7,
+      "rule": "optimization_goal mismatched with billing_event",
+      "error": "Each goal requires a specific billing_event (see goal_to_billing_event)",
+      "fix": "Use the goal_to_billing_event map to select compatible billing"
+    },
+    {
+      "id": 8,
+      "rule": "optimization_goal not valid for objective_type",
+      "error": "Each objective supports specific goals (see objective_to_optimization_goals)",
+      "fix": "Use the objective_to_optimization_goals map"
+    },
+    {
+      "id": 9,
+      "rule": "Spark Ad + identity_type CUSTOMIZED_USER",
+      "error": "Spark Ads require BC_AUTH_TT, TT_USER, or AUTH_CODE",
+      "fix": "Change identity_type"
+    },
+    {
+      "id": 10,
+      "rule": "Spark Ad + video_id set",
+      "error": "Spark Ads use the organic post as creative, not an uploaded video",
+      "fix": "Remove video_id; tiktok_item_id is the creative"
+    },
+    {
+      "id": 11,
+      "rule": "LEAD_GENERATION ad without page_id",
+      "error": "Lead gen ads require an Instant Form page",
+      "fix": "Provide page_id (from page/get/ endpoint or existing ad)"
+    },
+    {
+      "id": 12,
+      "rule": "TRAFFIC/WEB_CONVERSIONS non-Spark ad without landing_page_url",
+      "error": "Website-type ads need a destination URL",
+      "fix": "Provide landing_page_url starting with https://"
+    },
+    {
+      "id": 13,
+      "rule": "gender passed as array",
+      "error": "gender must be a single string, not an array",
+      "fix": "Use GENDER_UNLIMITED to target all genders"
+    },
+    {
+      "id": 14,
+      "rule": "SCHEDULE_START_END without schedule_end_time",
+      "error": "End time required for scheduled campaigns",
+      "fix": "Provide schedule_end_time in YYYY-MM-DD HH:MM:SS UTC format"
+    },
+    {
+      "id": 15,
+      "rule": "APP_PROMOTION campaign without app_promotion_type",
+      "error": "Must specify APP_INSTALL or APP_RETARGETING",
+      "fix": "Set app_promotion_type"
+    },
+    {
+      "id": 16,
+      "rule": "APP_PROMOTION adgroup without app_id or operating_systems",
+      "error": "App campaigns require app_id and platform",
+      "fix": "Provide app_id and operating_systems (['ANDROID'] or ['IOS'])"
+    },
+    {
+      "id": 17,
+      "rule": "Conversion goal without pixel_id",
+      "error": "CONVERT/LANDING_PAGE_VIEW/VALUE goals require pixel tracking",
+      "fix": "Provide pixel_id and optimization_event"
+    },
+    {
+      "id": 18,
+      "rule": "RF_REACH campaign with non-INFINITE budget",
+      "error": "Reach & Frequency must use BUDGET_MODE_INFINITE",
+      "fix": "Set budget_mode to BUDGET_MODE_INFINITE"
+    },
+    {
+      "id": 19,
+      "rule": "CAROUSEL ad with < 2 images",
+      "error": "Carousel ads require 2-10 images",
+      "fix": "Provide at least 2 image IDs in image_ids"
+    },
+    {
+      "id": 20,
+      "rule": "Non-Spark ad without display_name",
+      "error": "Regular ads need a brand/account name shown on the ad",
+      "fix": "Provide display_name (1-40 chars)"
+    },
+    {
+      "id": 21,
+      "rule": "app_promotion_type set on non-APP_PROMOTION objective",
+      "error": "app_promotion_type only applies to APP_PROMOTION campaigns",
+      "fix": "Remove app_promotion_type or change objective_type"
+    },
+    {
+      "id": 22,
+      "rule": "PRODUCT_SALES without catalog_enabled or sales_destination",
+      "error": "Product sales campaigns need a sales configuration",
+      "fix": "Set catalog_enabled=true or provide sales_destination"
+    },
+    {
+      "id": 23,
+      "rule": "PRODUCT_SALES adgroup without identity_id/identity_type",
+      "error": "Shopping campaigns require a TikTok account identity",
+      "fix": "Provide identity_id and identity_type"
+    },
+    {
+      "id": 24,
+      "rule": "LEAD_GENERATION + PLACEMENT_TYPE_AUTOMATIC",
+      "error": "Automatic placement is not supported for Lead Generation campaigns",
+      "fix": "Use PLACEMENT_TYPE_NORMAL with placements: ['PLACEMENT_TIKTOK']"
+    },
+    {
+      "id": 25,
+      "rule": "PLACEMENT_TYPE_NORMAL without placements array",
+      "error": "Manual placement requires explicit placement list",
+      "fix": "Provide placements: ['PLACEMENT_TIKTOK'] (or include PLACEMENT_PANGLE, PLACEMENT_GLOBAL_APP_BUNDLE)"
+    },
+    {
+      "id": 26,
+      "rule": "BID_TYPE_NO_BID without explicit pacing",
+      "error": "TikTok defaults pacing to FAST which is invalid with NO_BID",
+      "fix": "Always send pacing: 'PACING_MODE_SMOOTH' when bid_type is BID_TYPE_NO_BID (MCP server auto-sets this)"
+    },
+    {
+      "id": 27,
+      "rule": "Missing promotion_type on adgroup",
+      "error": "TikTok requires promotion_type but it's often omitted",
+      "fix": "Set promotion_type based on objective: LEAD_GENERATION→'LEAD_GENERATION', TRAFFIC/WEB_CONVERSIONS→'WEBSITE' (MCP server auto-sets this)"
+    },
+    {
+      "id": 28,
+      "rule": "Deprecated CTA used (DOWNLOAD, BUY_NOW, WATCH_MORE, SEE_MORE, GET_OFFER)",
+      "error": "These 5 CTAs are globally deprecated by TikTok and rejected for ALL objective types — not objective-specific. Verified via live API testing against LEAD_GENERATION and TRAFFIC (2026-03-17).",
+      "fix": "Use valid CTAs only. Replacements: DOWNLOAD→DOWNLOAD_NOW, BUY_NOW→SHOP_NOW or ORDER_NOW. See enums.call_to_action for the full list of 30 valid values."
+    },
+    {
+      "id": 29,
+      "rule": "lead_ad_form_id used instead of page_id",
+      "error": "TikTok API expects page_id, not lead_ad_form_id",
+      "fix": "Use page_id field (MCP server auto-maps lead_ad_form_id → page_id)"
+    },
+    {
+      "id": 30,
+      "rule": "campaign_objective not passed to adgroup/ad creation",
+      "error": "Without campaign_objective, objective-specific validations (blocked CTAs, page_id, landing_page_url, placement restrictions) are skipped — resulting in TikTok 40002 errors",
+      "fix": "Always pass campaign_objective from the campaign to create_adgroup and create_ad calls. The MCP server uses it for validation and auto-defaults (promotion_type, pacing)."
+    }
+  ],
+
+  "critical_passthrough_fields": {
+    "_description": "These fields must flow from parent entity to child creation calls. Without them, validations and auto-fixes are bypassed.",
+    "campaign_objective": {
+      "source": "campaign.objective_type",
+      "pass_to": ["create_adgroup", "create_ad"],
+      "used_for": [
+        "Objective-specific field requirements (page_id for LEAD_GENERATION, landing_page_url for TRAFFIC)",
+        "Placement validation (LEAD_GENERATION rejects PLACEMENT_TYPE_AUTOMATIC)",
+        "Auto-setting promotion_type",
+        "Auto-setting optimization_goal defaults"
+      ],
+      "consequence_if_missing": "All objective-specific validations are skipped. TikTok will reject the request with a 40002 error."
+    }
+  },
+
+  "objective_prerequisites": {
+    "LEAD_GENERATION": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "placements", "promotion_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids"],
+      "ad": ["adgroup_id", "ad_name", "ad_format", "page_id"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "asset_prerequisites": ["page_id (Instant Form — created in TikTok Ads Manager, fetched via page/get/)"],
+      "constraints": {
+        "placement_type": "MUST be PLACEMENT_TYPE_NORMAL (AUTOMATIC not supported)",
+        "placements": "['PLACEMENT_TIKTOK']",
+        "promotion_type": "LEAD_GENERATION (auto-set by MCP server)"
+      },
+      "defaults": {
+        "optimization_goal": "LEAD_GENERATION",
+        "billing_event": "OCPM",
+        "placement_type": "PLACEMENT_TYPE_NORMAL",
+        "placements": ["PLACEMENT_TIKTOK"],
+        "promotion_type": "LEAD_GENERATION"
+      }
+    },
+    "TRAFFIC": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids"],
+      "ad": ["adgroup_id", "ad_name", "ad_format", "landing_page_url"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "optional_adgroup": ["pixel_id"],
+      "defaults": {
+        "optimization_goal": "CLICK",
+        "billing_event": "CPC"
+      }
+    },
+    "WEB_CONVERSIONS": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids", "pixel_id", "optimization_event"],
+      "ad": ["adgroup_id", "ad_name", "ad_format", "landing_page_url"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "defaults": {
+        "optimization_goal": "CONVERT",
+        "billing_event": "OCPM"
+      }
+    },
+    "APP_PROMOTION": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode", "app_promotion_type"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids", "app_id", "operating_systems"],
+      "ad": ["adgroup_id", "ad_name", "ad_format"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "defaults": {
+        "optimization_goal": "INSTALL",
+        "billing_event": "OCPM"
+      }
+    },
+    "REACH": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids"],
+      "ad": ["adgroup_id", "ad_name", "ad_format"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "defaults": {
+        "optimization_goal": "REACH",
+        "billing_event": "CPM"
+      }
+    },
+    "VIDEO_VIEWS": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids"],
+      "ad": ["adgroup_id", "ad_name", "ad_format"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "ad_format_constraint": "Must use SINGLE_VIDEO",
+      "defaults": {
+        "optimization_goal": "VIDEO_VIEW",
+        "billing_event": "CPV"
+      }
+    },
+    "ENGAGEMENT": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids"],
+      "ad": ["adgroup_id", "ad_name", "ad_format"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "defaults": {
+        "optimization_goal": "CLICK",
+        "billing_event": "CPC"
+      }
+    },
+    "PRODUCT_SALES": {
+      "campaign": ["campaign_name", "objective_type", "budget", "budget_mode", "catalog_enabled_or_sales_destination"],
+      "adgroup": ["campaign_id", "adgroup_name", "placement_type", "budget", "budget_mode", "schedule_type", "optimization_goal", "billing_event", "bid_type", "location_ids", "identity_id", "identity_type", "catalog_id_or_store_id"],
+      "ad": ["adgroup_id", "ad_name", "ad_format"],
+      "ad_spark": ["tiktok_item_id", "identity_id", "identity_type"],
+      "ad_regular": ["video_id", "ad_text", "display_name"],
+      "defaults": {
+        "optimization_goal": "CONVERT",
+        "billing_event": "OCPM"
+      }
+    }
+  },
+
+  "safe_defaults": {
+    "_description": "These can be auto-applied when the user doesn't specify. All other fields MUST come from the user.",
+    "placement_type": "PLACEMENT_TYPE_NORMAL",
+    "placements": ["PLACEMENT_TIKTOK"],
+    "schedule_type": "SCHEDULE_FROM_NOW",
+    "bid_type": "BID_TYPE_NO_BID",
+    "budget_mode": "BUDGET_MODE_DAY",
+    "pacing": "PACING_MODE_SMOOTH",
+    "gender": "GENDER_UNLIMITED",
+    "_note_placement": "PLACEMENT_TYPE_AUTOMATIC works for most objectives but NOT for LEAD_GENERATION. PLACEMENT_TYPE_NORMAL with PLACEMENT_TIKTOK is universally safe."
+  },
+
+  "must_ask_user": [
+    "campaign_name",
+    "adgroup_name",
+    "ad_name",
+    "objective_type",
+    "budget",
+    "location_ids",
+    "landing_page_url",
+    "page_id",
+    "tiktok_item_id"
+  ],
+
+  "enums": {
+    "gender": {
+      "type": "single_string_not_array",
+      "values": ["GENDER_MALE", "GENDER_FEMALE", "GENDER_UNLIMITED"]
+    },
+    "age_groups": {
+      "type": "array",
+      "values": ["AGE_13_17", "AGE_18_24", "AGE_25_34", "AGE_35_44", "AGE_45_54", "AGE_55_100"]
+    },
+    "ad_format": {
+      "type": "string",
+      "values": ["SINGLE_VIDEO", "SINGLE_IMAGE", "CAROUSEL", "CAROUSEL_ADS", "LIVE_CONTENT", "CATALOG_CAROUSEL"]
+    },
+    "call_to_action": {
+      "type": "string",
+      "values": [
+        "APPLY_NOW", "BOOK_NOW", "CALL_NOW", "CHECK_AVAILABILITY",
+        "CONTACT_US", "DOWNLOAD_NOW", "EXPERIENCE_NOW", "GET_QUOTE",
+        "GET_SHOWTIMES", "GET_TICKETS_NOW", "INSTALL_NOW", "INTERESTED",
+        "JOIN_THIS_HASHTAG", "LEARN_MORE", "LISTEN_NOW", "ORDER_NOW",
+        "PLAY_GAME", "PREORDER_NOW", "READ_MORE", "SEND_MESSAGE",
+        "SHOOT_WITH_THIS_EFFECT", "SHOP_NOW", "SIGN_UP", "SUBSCRIBE",
+        "VIEW_NOW", "VIEW_PROFILE", "VIEW_VIDEO_WITH_THIS_EFFECT",
+        "VISIT_STORE", "WATCH_LIVE", "WATCH_NOW"
+      ],
+      "deprecated": ["DOWNLOAD", "BUY_NOW", "WATCH_MORE", "SEE_MORE", "GET_OFFER"],
+      "deprecated_note": "These 5 CTAs are rejected by TikTok for ALL objectives. Use the replacements: DOWNLOAD→DOWNLOAD_NOW, BUY_NOW→SHOP_NOW/ORDER_NOW"
+    },
+    "spark_identity_types": {
+      "type": "string",
+      "values": ["BC_AUTH_TT", "TT_USER", "AUTH_CODE"],
+      "note": "CUSTOMIZED_USER is for regular ads only, NOT Spark Ads"
+    },
+    "schedule_type": {
+      "type": "string",
+      "values": ["SCHEDULE_FROM_NOW", "SCHEDULE_START_END"]
+    },
+    "placement_type": {
+      "type": "string",
+      "values": ["PLACEMENT_TYPE_AUTOMATIC", "PLACEMENT_TYPE_NORMAL"]
+    }
+  },
+
+  "reporting_constraints": {
+    "_description": "TikTok Ads API v1.3 — Reporting constraints verified via live API (2026-03-24).",
+
+    "date_range_limits": {
+      "_description": "Maximum date span depends on the time dimension used. Exceeding these returns error 40002.",
+      "no_time_dimension": {
+        "max_days": 365,
+        "error": "max time span must be less than 365 days",
+        "note": "Aggregated reports (no stat_time_day/stat_time_hour) can span up to 365 days"
+      },
+      "stat_time_day": {
+        "max_days": 30,
+        "error": "max time span is 30 days when use stat_time_day",
+        "note": "For daily breakdowns, start_date to end_date must be ≤30 days. To cover longer periods, make multiple requests in 30-day windows."
+      },
+      "stat_time_hour": {
+        "max_days": 1,
+        "error": "max time span is 1 day when use stat_time_hour",
+        "note": "start_date must equal end_date. Only single-day hourly reports are supported."
+      },
+      "audience_report": {
+        "max_days": "no limit found (tested 180 days)",
+        "note": "AUDIENCE reports do not support stat_time_day or stat_time_hour dimensions."
+      }
+    },
+
+    "page_size_limits": {
+      "report_integrated_get": {"max": 1000, "error": "page_size: Must be greater than or equal to 1 and less than or equal to 1000."},
+      "campaign_get": {"max": 1000},
+      "adgroup_get": {"max": 1000},
+      "ad_get": {"max": 1000},
+      "dmp_custom_audience_list": {"max": 100},
+      "file_image_ad_search": {"max": 100},
+      "file_video_ad_search": {"max": 200}
+    },
+
+    "data_levels": {
+      "AUCTION_CAMPAIGN": {"valid": true, "default_dimension": "campaign_id"},
+      "AUCTION_ADGROUP": {"valid": true, "default_dimension": "adgroup_id"},
+      "AUCTION_AD": {"valid": true, "default_dimension": "ad_id"},
+      "AUCTION_ADVERTISER": {"valid": true, "default_dimension": "advertiser_id", "note": "Returns 1 row with account-level totals"}
+    },
+
+    "report_types": {
+      "BASIC": {
+        "supported_time_dimensions": ["stat_time_day", "stat_time_hour"],
+        "supported_entity_dimensions": ["campaign_id", "adgroup_id", "ad_id", "advertiser_id"],
+        "note": "General performance report. Supports enable_total_metrics."
+      },
+      "AUDIENCE": {
+        "supported_time_dimensions": [],
+        "supported_audience_dimensions": ["gender", "age", "country_code", "province_id", "platform", "placement", "ac", "language", "interest_category", "device_brand_id", "dma_id"],
+        "note": "stat_time_day is NOT supported. Audience dimension filters (gender, age, country_code) are silently ignored by the API — filtering is client-side only."
+      },
+      "CATALOG": {
+        "supported_dimensions": ["catalog_id", "product_id", "sku_id", "product_set_id", "stat_time_day"],
+        "unsupported_dimensions": ["campaign_id", "adgroup_id", "ad_id"],
+        "note": "campaign_id as a dimension is rejected. Use catalog-specific dimensions."
+      }
+    },
+
+    "filter_fields_by_data_level": {
+      "_description": "Status filter name changes per data level. primary_status is rejected on reports — use the level-specific status field.",
+      "AUCTION_CAMPAIGN": {
+        "supported": ["campaign_ids", "adgroup_ids", "ad_ids", "campaign_status", "objective_type", "campaign_type", "promotion_type", "billing_event"],
+        "rejected": ["primary_status", "smart_target"],
+        "status_field": "campaign_status",
+        "status_values": ["STATUS_ALL", "STATUS_NOT_DELETE", "STATUS_DELIVERY_OK", "STATUS_DISABLE", "STATUS_DELETE", "STATUS_NOT_DELIVERY", "STATUS_TIME_DONE", "STATUS_CLOSED", "STATUS_FROZEN", "STATUS_RF_CLOSED"]
+      },
+      "AUCTION_ADGROUP": {
+        "supported": ["campaign_ids", "adgroup_ids", "adgroup_status", "objective_type"],
+        "rejected": ["campaign_status"],
+        "status_field": "adgroup_status",
+        "status_values": ["STATUS_ALL", "STATUS_NOT_DELETE", "STATUS_DELIVERY_OK", "STATUS_DISABLE", "STATUS_DELETE", "STATUS_NOT_DELIVERY"]
+      },
+      "AUCTION_AD": {
+        "supported": ["campaign_ids", "adgroup_ids", "ad_ids", "ad_status", "objective_type"],
+        "status_field": "ad_status",
+        "status_values": ["STATUS_ALL", "STATUS_NOT_DELETE", "STATUS_DELIVERY_OK", "STATUS_DISABLE", "STATUS_DELETE", "STATUS_NOT_DELIVERY"]
+      }
+    },
+
+    "audience_dimension_filtering": {
+      "_description": "AUDIENCE report dimension filters are SILENTLY IGNORED by the API — it returns code 0 but does not filter rows.",
+      "gender": {"accepted": true, "actually_filters": false, "enum_values": ["GENDER_MALE", "GENDER_FEMALE"]},
+      "age": {"accepted": true, "actually_filters": false, "enum_values": ["AGE_13_17", "AGE_18_24", "AGE_25_34", "AGE_35_44", "AGE_45_54", "AGE_55_100"]},
+      "country_code": {"accepted": false, "error": "country_code is not supported as a filter field"},
+      "note": "All audience breakdown filtering must be done client-side after results are returned."
+    },
+
+    "secondary_dimension_requirements": {
+      "_description": "Some AUDIENCE dimensions require a parent dimension to be present.",
+      "province_id": {"requires": "country_code"},
+      "dma_id": {"requires": "country_code"},
+      "interest_category_v2": {"requires": "interest_category"},
+      "interest_category_tier2": {"requires": "interest_category"},
+      "interest_category_tier3": {"requires": "interest_category_tier2"},
+      "interest_category_tier4": {"requires": "interest_category_tier3"},
+      "device_brand_id": {"requires": "platform"}
+    },
+
+    "entity_get_status_values": {
+      "_description": "Status values for tiktok_entity_get (uses primary_status, NOT campaign_status).",
+      "field_name": "primary_status",
+      "values": ["STATUS_ALL", "STATUS_NOT_DELETE", "STATUS_DELIVERY_OK", "STATUS_DISABLE", "STATUS_DELETE", "STATUS_NOT_DELIVERY"],
+      "note": "These apply to campaign/get/, adgroup/get/, and ad/get/ endpoints."
+    },
+
+    "creative_endpoints": {
+      "file_image_ad_get": {"exists": false, "note": "Returns non-JSON. Use file/image/ad/search/ instead."},
+      "file_image_ad_search": {"exists": true, "filters": ["image_ids"], "max_page_size": 100},
+      "file_video_ad_search": {"exists": true, "filters": ["display_name", "video_ids"], "max_page_size": 200},
+      "ad_get_as_creatives": {"exists": true, "filters": ["primary_status", "campaign_ids", "adgroup_ids"], "max_page_size": 1000}
+    },
+
+    "metric_value_types": {
+      "_description": "All report metric values are returned as STRINGS, not numbers.",
+      "examples": {
+        "spend": "\"0.00\"",
+        "impressions": "\"0\"",
+        "conversion": "\"0\"",
+        "ctr": "\"0.00\""
+      },
+      "note": "Backend must parse string values to numeric types."
+    }
+  }
+}

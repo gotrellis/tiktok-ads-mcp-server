@@ -239,6 +239,221 @@ class CampaignTools:
                 "message": "Failed to retrieve ad groups"
             }
     
+    async def get_adgroup_details(self, adgroup_id: str) -> Dict[str, Any]:
+        """Get detailed information about a specific ad group.
+
+        Args:
+            adgroup_id: The ad group ID to retrieve details for
+
+        Returns:
+            Detailed ad group information
+        """
+        try:
+            result = await self.client.get_adgroup_details(adgroup_id)
+
+            adgroups = result.get("data", {}).get("list", [])
+            if not adgroups:
+                return {
+                    "success": False,
+                    "data": {
+                        "error": "Ad group not found",
+                        "adgroup_id": adgroup_id
+                    }
+                }
+
+            adgroup = adgroups[0]
+
+            adgroup_details = {
+                "adgroup_id": adgroup.get("adgroup_id"),
+                "adgroup_name": adgroup.get("adgroup_name"),
+                "campaign_id": adgroup.get("campaign_id"),
+                "advertiser_id": adgroup.get("advertiser_id"),
+                "status": {
+                    "primary_status": adgroup.get("primary_status"),
+                    "secondary_status": adgroup.get("secondary_status"),
+                },
+                "placement_type": adgroup.get("placement_type"),
+                "budget_info": {
+                    "budget": adgroup.get("budget"),
+                    "budget_mode": adgroup.get("budget_mode"),
+                },
+                "bid_info": {
+                    "bid_type": adgroup.get("bid_type"),
+                    "bid": adgroup.get("bid"),
+                    "bid_strategy": adgroup.get("bid_strategy"),
+                    "optimization_goal": adgroup.get("optimization_goal"),
+                    "billing_event": adgroup.get("billing_event"),
+                },
+                "schedule": {
+                    "schedule_type": adgroup.get("schedule_type"),
+                    "schedule_start_time": adgroup.get("schedule_start_time"),
+                    "schedule_end_time": adgroup.get("schedule_end_time"),
+                    "dayparting": adgroup.get("dayparting"),
+                },
+                "targeting": {
+                    "location_ids": adgroup.get("location_ids"),
+                    "age_groups": adgroup.get("age_groups"),
+                    "gender": adgroup.get("gender"),
+                    "languages": adgroup.get("languages"),
+                    "interest_category_ids": adgroup.get("interest_category_ids"),
+                },
+                "create_time": adgroup.get("create_time"),
+                "modify_time": adgroup.get("modify_time"),
+            }
+
+            return {
+                "success": True,
+                "data": {
+                    "adgroup": adgroup_details,
+                    "message": f"Retrieved details for ad group {adgroup_id}"
+                }
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "adgroup_id": adgroup_id,
+                "message": "Failed to retrieve ad group details"
+            }
+
+    async def get_ads(
+        self,
+        adgroup_id: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Get ads, optionally filtered by ad group or campaign.
+
+        Args:
+            adgroup_id: Filter ads by ad group ID
+            campaign_id: Filter ads by campaign ID
+            status: Filter ads by status
+            limit: Maximum number of ads to return
+
+        Returns:
+            Ad data and metadata
+        """
+        try:
+            result = await self.client.get_ads(
+                adgroup_id=adgroup_id,
+                campaign_id=campaign_id,
+                status=status,
+                limit=limit,
+            )
+
+            ads = result.get("data", {}).get("list", [])
+
+            formatted_ads = []
+            for ad in ads:
+                formatted_ad = {
+                    "ad_id": ad.get("ad_id"),
+                    "ad_name": ad.get("ad_name"),
+                    "adgroup_id": ad.get("adgroup_id"),
+                    "campaign_id": ad.get("campaign_id"),
+                    "status": ad.get("primary_status"),
+                    "ad_text": ad.get("ad_text"),
+                    "call_to_action": ad.get("call_to_action"),
+                    "image_mode": ad.get("image_mode"),
+                    "landing_page_url": ad.get("landing_page_url"),
+                    "create_time": ad.get("create_time"),
+                    "modify_time": ad.get("modify_time"),
+                }
+                formatted_ads.append(formatted_ad)
+
+            return {
+                "success": True,
+                "data": {
+                    "ads": formatted_ads,
+                    "total_count": result.get("data", {}).get("page_info", {}).get("total_number", 0),
+                    "message": f"Retrieved {len(formatted_ads)} ads"
+                }
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "data": {
+                    "error": str(e),
+                    "message": "Failed to retrieve ads"
+                }
+            }
+
+    async def get_ad_details(self, ad_id: str) -> Dict[str, Any]:
+        """Get detailed information about a specific ad.
+
+        Args:
+            ad_id: The ad ID to retrieve details for
+
+        Returns:
+            Detailed ad information
+        """
+        try:
+            result = await self.client.get_ad_details(ad_id)
+
+            ads = result.get("data", {}).get("list", [])
+            if not ads:
+                return {
+                    "success": False,
+                    "data": {
+                        "error": "Ad not found",
+                        "ad_id": ad_id
+                    }
+                }
+
+            ad = ads[0]
+
+            ad_details = {
+                "ad_id": ad.get("ad_id"),
+                "ad_name": ad.get("ad_name"),
+                "adgroup_id": ad.get("adgroup_id"),
+                "campaign_id": ad.get("campaign_id"),
+                "advertiser_id": ad.get("advertiser_id"),
+                "status": {
+                    "primary_status": ad.get("primary_status"),
+                    "secondary_status": ad.get("secondary_status"),
+                },
+                "creative_info": {
+                    "ad_text": ad.get("ad_text"),
+                    "ad_texts": ad.get("ad_texts"),
+                    "call_to_action": ad.get("call_to_action"),
+                    "image_mode": ad.get("image_mode"),
+                    "image_ids": ad.get("image_ids"),
+                    "video_id": ad.get("video_id"),
+                    "display_name": ad.get("display_name"),
+                    "profile_image_url": ad.get("profile_image_url"),
+                },
+                "landing_page": {
+                    "landing_page_url": ad.get("landing_page_url"),
+                    "deeplink": ad.get("deeplink"),
+                    "deeplink_type": ad.get("deeplink_type"),
+                },
+                "tracking": {
+                    "tracking_pixel_id": ad.get("pixel_id"),
+                    "impression_tracking_url": ad.get("impression_tracking_url"),
+                    "click_tracking_url": ad.get("click_tracking_url"),
+                },
+                "create_time": ad.get("create_time"),
+                "modify_time": ad.get("modify_time"),
+            }
+
+            return {
+                "success": True,
+                "data": {
+                    "ad": ad_details,
+                    "message": f"Retrieved details for ad {ad_id}"
+                }
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "ad_id": ad_id,
+                "message": "Failed to retrieve ad details"
+            }
+
     async def create_adgroup(
         self,
         campaign_id: str,

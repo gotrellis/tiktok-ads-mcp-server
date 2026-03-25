@@ -29,6 +29,7 @@ dependencies = [
     "asyncio>=3.4.3",
     "typing-extensions>=4.0.0",
     "aiohttp>=3.12.15",
+    "six>=1.17.0",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +48,7 @@ Repository = "https://github.com/adsmcp/tiktok-ads-mcp"
 Documentation = "https://docs.adsmcp.com/tiktok"
 
 [project.scripts]
-tiktok-ads-mcp = "tiktok_ads_mcp.server:main"
+tiktok-ads-mcp = "tiktok_ads_mcp.server:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tiktok_ads_mcp"]
