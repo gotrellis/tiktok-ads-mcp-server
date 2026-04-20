@@ -336,8 +336,8 @@ def _error(message: str) -> Dict[str, Any]:
 
 
 def _decode_item_timestamp(item_id: str) -> datetime:
-    """Decode creation timestamp from a TikTok snowflake item_id (top 42 bits = ms since Unix epoch)."""
-    return datetime.fromtimestamp((int(item_id) >> 22) / 1000, tz=timezone.utc)
+    """Decode creation timestamp from a TikTok snowflake item_id (top 32 bits = seconds since Unix epoch)."""
+    return datetime.fromtimestamp(int(item_id) >> 32, tz=timezone.utc)
 
 
 def _parse_date(date_str: str, end_of_day: bool = False) -> Optional[datetime]:
