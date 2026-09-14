@@ -41,6 +41,7 @@ class CacheManager:
         "interest_categories": CACHE_TTL_INTEREST_CATEGORIES,
         "locations": CACHE_TTL_LOCATIONS,
         "account_info": CACHE_TTL_ACCOUNT_INFO,
+        "account_info_basic": CACHE_TTL_ACCOUNT_INFO,
         "audiences": CACHE_TTL_AUDIENCES,
         "pixels": CACHE_TTL_PIXELS,
     }

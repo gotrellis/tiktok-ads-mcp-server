@@ -15,6 +15,11 @@ DEFAULT_CONCURRENT_REQUESTS = 10
 DEFAULT_PAGE_SIZE = 200
 MAX_PAGE_SIZE = 1000
 
+# Per-request ID caps enforced by TikTok on lookup endpoints
+MAX_PIXEL_IDS_PER_REQUEST = 10       # pixel/event/stats/
+MAX_LOCATION_IDS_PER_REQUEST = 20    # tool/targeting/info/
+
+
 # Cache TTLs (seconds)
 CACHE_TTL_INTEREST_CATEGORIES = 86400  # 24 hours
 CACHE_TTL_LOCATIONS = 86400            # 24 hours

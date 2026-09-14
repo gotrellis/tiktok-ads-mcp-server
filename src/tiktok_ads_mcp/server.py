@@ -681,7 +681,7 @@ secondary_goal_result_rate	string	Deep funnel result rate	Percentage of deep fun
     tools.extend([
         Tool(
             name="tiktok_entity_get",
-            description="Read any TikTok Ads entity: campaigns, adgroups, ads, account_info, pixels, catalogs, catalog_products, product_sets, interest_categories, regions, action_categories, identities, audiences, lead_forms, lead_download_task (create task to download leads from a form), lead_download (download leads from completed task), bc_info (Business Center info), bc_assets (list advertisers under a BC). Use entity_type to select what to read. Supports filtering, pagination, and caching for slow-changing data.",
+            description="Read any TikTok Ads entity: campaigns, adgroups, ads, account_info (advertiser details plus the account's local clock and which days it has spent — use this to pick a sane report date range), pixels, pixel_event_stats (pixel event counts for a date range — compare against reported conversions to spot broken tracking), catalogs, catalog_products, product_sets, interest_categories, regions, location_info (resolve location IDs found on an ad group back to names), action_categories, identities, audiences, lead_forms, lead_download_task (create task to download leads from a form), lead_download (download leads from completed task), bc_info (Business Center info), bc_assets (list advertisers under a BC). Use entity_type to select what to read. Supports filtering, pagination, and caching for slow-changing data.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -691,9 +691,10 @@ secondary_goal_result_rate	string	Deep funnel result rate	Percentage of deep fun
                             "campaigns", "campaign_details",
                             "adgroups", "adgroup_details",
                             "ads", "ad_details",
-                            "account_info", "pixels",
+                            "account_info", "pixels", "pixel_event_stats",
                             "catalogs", "catalog_products", "product_sets",
-                            "interest_categories", "regions", "action_categories",
+                            "interest_categories", "regions", "location_info",
+                            "action_categories",
                             "identities", "audiences",
                             "lead_forms",  # returns guidance to use bc_assets instead
                             "lead_download_task", "lead_download",
@@ -717,6 +718,18 @@ secondary_goal_result_rate	string	Deep funnel result rate	Percentage of deep fun
                     "version": {"type": "integer", "description": "Interest category version (default 2)"},
                     "form_id": {"type": "string", "description": "Lead form ID (for lead_download_task)"},
                     "task_id": {"type": "string", "description": "Task ID (for lead_download — from lead_download_task response)"},
+                    "pixel_ids": {"type": "array", "items": {"type": "string"}, "description": "Pixel IDs for pixel_event_stats (max 10 — get them from entity_type='pixels')"},
+                    "pixel_id": {"type": "string", "description": "Filter the pixels listing to a single pixel ID"},
+                    "code": {"type": "string", "description": "Filter the pixels listing by pixel code"},
+                    "name": {"type": "string", "description": "Filter the pixels listing by pixel name"},
+                    "order_by": {"type": "string", "description": "Sort order for the pixels listing"},
+                    "location_ids": {"type": "array", "items": {"type": "string"}, "description": "Location IDs to resolve for location_info (max 20)"},
+                    "objective_type": {"type": "string", "description": "Objective context for location_info (default TRAFFIC)"},
+                    "placements": {"type": "array", "items": {"type": "string"}, "description": "Placements for location_info (default ['PLACEMENT_TIKTOK'])"},
+                    "date_range": {"type": "string", "enum": ["today", "yesterday", "last_3_days", "last_7_days", "last_14_days", "last_30_days", "last_60_days", "last_90_days", "this_month", "last_month"], "description": "Named date range for pixel_event_stats (default last_7_days)"},
+                    "start_date": {"type": "string", "description": "Start date YYYY-MM-DD for pixel_event_stats (overrides date_range; must be paired with end_date)"},
+                    "end_date": {"type": "string", "description": "End date YYYY-MM-DD for pixel_event_stats (overrides date_range; must be paired with start_date)"},
+                    "include_spend_history": {"type": "boolean", "description": "For account_info: also report which days the account has spent in the last 90 days — useful for picking a report date range that is not empty. Default false because it costs 3 extra report calls; the result is cached for an hour."},
                 },
                 "required": ["entity_type"],
             }
@@ -930,16 +943,23 @@ secondary_goal_result_rate	string	Deep funnel result rate	Percentage of deep fun
         ),
         Tool(
             name="tiktok_intelligence",
-            description="Cross-system analysis, optimization insights, and targeting intelligence. Analysis: funnel_overview, anomaly_check, optimization_actions, scaling_readiness. Targeting: interests (browse/search interest categories — use keyword to filter, e.g. 'apparel'), regions (get targetable locations with location_ids — filter by country_code, level, keyword), action_categories (behavioral targeting options like 'followed comedy creators').",
+            description="Cross-system analysis, optimization insights, and targeting intelligence. Analysis: funnel_overview, anomaly_check, optimization_actions, scaling_readiness, wasted_spend_audit (rank zero-conversion campaigns and ad groups by money at risk, with a likely cause and a recommendation of pause_or_reduce / keep_small_retest_budget / needs_more_data for each). Targeting: interests (browse/search interest categories — use keyword to filter, e.g. 'apparel'), regions (get targetable locations with location_ids — filter by country_code, level, keyword), action_categories (behavioral targeting options like 'followed comedy creators').",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "analysis_type": {
                         "type": "string",
-                        "enum": ["funnel_overview", "anomaly_check", "optimization_actions", "scaling_readiness", "interests", "regions", "action_categories"],
+                        "enum": ["funnel_overview", "anomaly_check", "optimization_actions", "scaling_readiness", "wasted_spend_audit", "interests", "regions", "action_categories"],
                         "description": "Type of analysis or targeting data to retrieve"
                     },
                     "date_range": {"type": "string", "enum": ["today", "yesterday", "last_3_days", "last_7_days", "last_14_days", "last_30_days"], "description": "Date range for analysis (default: last_7_days)"},
+                    "min_spend": {"type": "number", "description": "wasted_spend_audit: spend at or above this counts as meaningful (default 300, account currency)"},
+                    "min_clicks": {"type": "number", "description": "wasted_spend_audit: clicks at or above this count as meaningful traffic (default 100)"},
+                    "high_ctr": {"type": "number", "description": "wasted_spend_audit: CTR percent that flags curiosity clicks (default 2)"},
+                    "high_cpc": {"type": "number", "description": "wasted_spend_audit: CPC that flags expensive traffic (default 5, account currency)"},
+                    "campaign_limit": {"type": "integer", "description": "wasted_spend_audit: how many campaigns to scan (default 50)"},
+                    "include_adgroup_breakdown": {"type": "boolean", "description": "wasted_spend_audit: also break the worst campaigns down by ad group (default true)"},
+                    "max_adgroup_campaigns": {"type": "integer", "description": "wasted_spend_audit: how many campaigns to break down by ad group (default 3)"},
                     "campaign_ids": {"type": "array", "items": {"type": "string"}, "description": "Filter by campaign IDs (for scaling_readiness)"},
                     "threshold": {"type": "number", "description": "Anomaly detection threshold as decimal (default: 0.3 = 30%)"},
                     "keyword": {"type": "string", "description": "Search keyword for interests or regions (e.g., 'apparel', 'United States')"},
@@ -1006,7 +1026,7 @@ def _sanitize_arguments(arguments: Dict[str, Any]) -> Dict[str, Any]:
     }
     _ID_LIST_FIELDS = {
         "campaign_ids", "adgroup_ids", "ad_ids", "comment_ids", "video_ids",
-        "auth_codes", "custom_audience_ids",
+        "auth_codes", "custom_audience_ids", "pixel_ids", "location_ids",
     }
     sanitized = dict(arguments)
     for key, val in sanitized.items():

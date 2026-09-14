@@ -5,8 +5,13 @@ Supported analysis_type values:
   anomaly_check         — Detect performance anomalies vs recent averages
   optimization_actions  — Actionable recommendations (kill, scale, refresh, renew)
   scaling_readiness     — Check if campaigns are ready to scale
+  wasted_spend_audit    — Rank zero-conversion campaigns/ad groups by money at risk
+  interests             — Browse/search interest categories
+  regions               — Targetable locations
+  action_categories     — Behavioral targeting options
 """
 
+import json
 import logging
 from typing import Any, Dict, List
 
@@ -314,7 +319,6 @@ class IntelligenceTool:
 
         filtering = None
         if campaign_ids:
-            import json
             filtering = [{
                 "field_name": "campaign_ids",
                 "filter_type": "IN",
@@ -481,6 +485,114 @@ class IntelligenceTool:
             "total_available": total,
         })
 
+    async def _wasted_spend_audit(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Find spend that produced no conversion signal, campaign-first.
+
+        Only zero-conversion entities are reported: with a conversion the
+        question is efficiency, which ``optimization_actions`` already covers.
+        """
+        date_range = args.get("date_range", "last_7_days")
+        start_date, end_date = resolve_date_range(date_range)
+        thresholds = {
+            "min_spend": _to_float(args.get("min_spend", 300)),
+            "min_clicks": _to_float(args.get("min_clicks", 100)),
+            "high_ctr": _to_float(args.get("high_ctr", 2)),
+            "high_cpc": _to_float(args.get("high_cpc", 5)),
+        }
+        campaign_limit = int(args.get("campaign_limit", 50))
+        max_adgroup_campaigns = int(args.get("max_adgroup_campaigns", 3))
+        include_adgroup_breakdown = args.get("include_adgroup_breakdown", True)
+
+        campaigns_result = await self.client.get_campaigns(
+            status="STATUS_NOT_DELETE", page_size=campaign_limit,
+        )
+        campaign_names = {
+            str(c["campaign_id"]): c.get("campaign_name")
+            for c in campaigns_result.get("data", {}).get("list", [])
+            if c.get("campaign_id")
+        }
+        if not campaign_names:
+            return _success({
+                "date_range": {"start_date": start_date, "end_date": end_date},
+                "campaigns_scanned": 0,
+                "candidates": [],
+                "adgroup_breakdown": [],
+                "message": "No non-deleted campaigns found.",
+            })
+
+        campaign_rows = (await self.client.get_report_all_pages(
+            report_type="BASIC",
+            data_level="AUCTION_CAMPAIGN",
+            dimensions=["campaign_id"],
+            metrics=AUDIT_METRICS,
+            start_date=start_date,
+            end_date=end_date,
+        )).get("data", {}).get("list", [])
+
+        candidates = _audit_candidates(
+            campaign_rows, "campaign_id", "campaign", campaign_names, thresholds,
+        )
+
+        adgroup_breakdown: List[Dict[str, Any]] = []
+        if include_adgroup_breakdown:
+            risky = [
+                c for c in candidates
+                if c["recommendation"] in {"pause_or_reduce", "keep_small_retest_budget"}
+            ][:max_adgroup_campaigns]
+
+            for campaign in risky:
+                adgroups_result = await self.client.get_adgroups(
+                    campaign_ids=[campaign["id"]],
+                    status="STATUS_NOT_DELETE",
+                    page_size=50,
+                )
+                adgroup_names = {
+                    str(a["adgroup_id"]): a.get("adgroup_name")
+                    for a in adgroups_result.get("data", {}).get("list", [])
+                    if a.get("adgroup_id")
+                }
+                if not adgroup_names:
+                    continue
+
+                adgroup_rows = (await self.client.get_report_all_pages(
+                    report_type="BASIC",
+                    data_level="AUCTION_ADGROUP",
+                    dimensions=["adgroup_id"],
+                    metrics=AUDIT_METRICS,
+                    start_date=start_date,
+                    end_date=end_date,
+                    filtering=[{
+                        "field_name": "adgroup_ids",
+                        "filter_type": "IN",
+                        "filter_value": json.dumps(list(adgroup_names)),
+                    }],
+                )).get("data", {}).get("list", [])
+
+                adgroup_breakdown.extend(_audit_candidates(
+                    adgroup_rows, "adgroup_id", "adgroup", adgroup_names,
+                    thresholds, parent_campaign_id=campaign["id"],
+                ))
+
+            adgroup_breakdown.sort(key=_audit_sort_score, reverse=True)
+
+        at_risk_spend = sum(
+            c["spend"] for c in candidates if c["confidence"] in {"High", "Medium"}
+        )
+        return _success({
+            "date_range": {"start_date": start_date, "end_date": end_date},
+            "thresholds": thresholds,
+            "campaigns_scanned": len(campaign_names),
+            "high_confidence_count": sum(1 for c in candidates if c["confidence"] == "High"),
+            "at_risk_spend": round(at_risk_spend, 2),
+            "candidates": candidates[:20],
+            "adgroup_breakdown": adgroup_breakdown[:30],
+            "next_steps": [
+                "Pause or cap high-confidence candidates until conversion tracking and landing page quality are verified.",
+                "Use the ad group breakdown to tell an isolated problem from a campaign-wide one.",
+                "Cross-check with entity_get pixel_event_stats: pixel events far below reported conversions usually means broken tracking, not a bad campaign.",
+            ],
+        })
+
     async def _action_categories(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Get available user behavior/action categories for behavioral targeting."""
         result = await self.client.get_action_categories()
@@ -494,10 +606,133 @@ class IntelligenceTool:
         "anomaly_check": _anomaly_check,
         "optimization_actions": _optimization_actions,
         "scaling_readiness": _scaling_readiness,
+        "wasted_spend_audit": _wasted_spend_audit,
         "interests": _interests,
         "regions": _regions,
         "action_categories": _action_categories,
     }
+
+
+# ── Wasted-spend audit helpers ──────────────────────────────────────────
+
+AUDIT_METRICS = [
+    "spend", "impressions", "clicks", "ctr", "cpc", "cpm",
+    "conversion", "cost_per_conversion", "conversion_rate_v2",
+]
+
+
+def _audit_candidates(
+    rows: List[Dict[str, Any]],
+    id_key: str,
+    level: str,
+    names: Dict[str, str],
+    thresholds: Dict[str, float],
+    parent_campaign_id: str | None = None,
+) -> List[Dict[str, Any]]:
+    """Classify report rows, keeping only zero-conversion entities that did something."""
+    candidates = []
+    for row in rows:
+        entity_id = str(row.get("dimensions", {}).get(id_key) or "")
+        metrics = row.get("metrics", {})
+        if not entity_id:
+            continue
+
+        spend = _to_float(metrics.get("spend"))
+        clicks = _to_float(metrics.get("clicks"))
+        conversions = _to_float(metrics.get("conversion"))
+        if conversions > 0 or (spend <= 0 and clicks <= 0):
+            continue
+
+        candidate = {
+            "id": entity_id,
+            "name": names.get(entity_id),
+            "level": level,
+            "spend": spend,
+            "clicks": clicks,
+            "impressions": _to_float(metrics.get("impressions")),
+            "ctr": _to_float(metrics.get("ctr")),
+            "cpc": _to_float(metrics.get("cpc")),
+            "cpm": _to_float(metrics.get("cpm")),
+            "conversions": conversions,
+        }
+        if parent_campaign_id:
+            candidate["parent_campaign_id"] = parent_campaign_id
+        candidates.append(_classify_wasted_spend(candidate, **thresholds))
+
+    candidates.sort(key=_audit_sort_score, reverse=True)
+    return candidates
+
+
+def _classify_wasted_spend(
+    candidate: Dict[str, Any],
+    min_spend: float,
+    min_clicks: float,
+    high_ctr: float,
+    high_cpc: float,
+) -> Dict[str, Any]:
+    """Attach a likely cause, confidence and recommendation to a zero-conversion row.
+
+    Ordered most to least conclusive; the first match wins. Confidence tracks
+    how much traffic backs the conclusion, not how bad the number looks.
+    """
+    spend, clicks = candidate["spend"], candidate["clicks"]
+    ctr, cpc = candidate["ctr"], candidate["cpc"]
+
+    if spend >= min_spend and clicks >= min_clicks:
+        verdict = (
+            "Meaningful spend and traffic, no conversion signal", "High", "pause_or_reduce",
+            "Do not increase budget. Verify conversion tracking fires, then check landing page match, offer and checkout friction.",
+            f"spend >= {min_spend} and clicks >= {min_clicks}",
+        )
+    elif clicks >= min_clicks:
+        verdict = (
+            "Enough clicks, no conversion signal", "Medium", "keep_small_retest_budget",
+            "Hold at a small fixed budget until tracking and funnel events are verified.",
+            f"clicks >= {min_clicks}",
+        )
+    elif spend >= min_spend:
+        verdict = (
+            "Spend without conversion signal", "Medium", "keep_small_retest_budget",
+            "Review click quality, tracking and landing page before spending more.",
+            f"spend >= {min_spend}",
+        )
+    elif ctr >= high_ctr and clicks >= max(50, min_clicks * 0.5):
+        verdict = (
+            "High CTR, no conversion signal", "Medium", "keep_small_retest_budget",
+            "Likely curiosity clicks — compare the ad hook against the landing page's first screen.",
+            f"ctr >= {high_ctr} with clicks >= {max(50, min_clicks * 0.5)}",
+        )
+    elif cpc >= high_cpc:
+        verdict = (
+            "Expensive traffic, no conversion signal", "Low", "needs_more_data",
+            "Check audience size, bid strategy and creative relevance before spending more.",
+            f"cpc >= {high_cpc}",
+        )
+    else:
+        verdict = (
+            "Too little data to judge", "Low", "needs_more_data",
+            "Continue only with a capped budget and verify lower-funnel events before concluding.",
+            "below all alert thresholds",
+        )
+
+    likely_issue, confidence, recommendation, next_action, trigger = verdict
+    candidate.update({
+        "likely_issue": likely_issue,
+        "confidence": confidence,
+        "recommendation": recommendation,
+        "next_action": next_action,
+        "evidence": [
+            f"spend={spend}", f"clicks={clicks}", "conversions=0", f"triggered by {trigger}",
+        ],
+    })
+    return candidate
+
+
+def _audit_sort_score(candidate: Dict[str, Any]) -> float:
+    """Rank by confidence first, then by how much money is actually at stake."""
+    confidence_rank = {"High": 2, "Medium": 1, "Low": 0}.get(candidate.get("confidence"), 0)
+    wasted = candidate.get("spend", 0.0) or candidate.get("clicks", 0.0) * max(candidate.get("cpc", 0.0), 0.01)
+    return confidence_rank * 1e9 + wasted
 
 
 def _to_float(val: Any) -> float:
