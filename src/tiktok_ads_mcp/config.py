@@ -19,21 +19,6 @@ MAX_PAGE_SIZE = 1000
 MAX_PIXEL_IDS_PER_REQUEST = 10       # pixel/event/stats/
 MAX_LOCATION_IDS_PER_REQUEST = 20    # tool/targeting/info/
 
-# Fields requested from advertiser/info/
-ADVERTISER_INFO_FIELDS = [
-    "advertiser_id",
-    "advertiser_name",
-    "currency",
-    "timezone",
-    "display_timezone",
-    "role",
-    "status",
-    "rejection_reason",
-    "language",
-    "industry",
-    "country",
-    "create_time",
-]
 
 # Cache TTLs (seconds)
 CACHE_TTL_INTEREST_CATEGORIES = 86400  # 24 hours

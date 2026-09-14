@@ -120,10 +120,25 @@ Zero conversions often means broken tracking rather than a bad campaign, so
 cross-check with `tiktok_entity_get` `entity_type="pixel_event_stats"`: pixel
 events far below reported conversions points at the pixel, not the creative.
 
+#### Picking a date range that isn't empty
+
+`tiktok_entity_get` `entity_type="account_info"` always reports the account's
+own wall clock — report dates are stamped in the advertiser timezone, so
+"today" from the server clock can be a day off. Pass
+`include_spend_history=true` to also get the first day the account spent and
+every day since that had spend. That costs three extra report calls, so it is
+opt-in; the result is cached for an hour.
+
 ## Development
 
 Copy `.env.example` to `.env` and fill in your TikTok app credentials — `.env`
 is gitignored and must never be committed.
+
+> **Upgrading an existing clone.** `.env` used to be tracked (as an empty
+> template) and is now untracked. If you had filled yours in, `git pull` will
+> refuse to run rather than clobber it — move it aside, pull, move it back:
+> `mv .env .env.bak && git pull && mv .env.bak .env`. If you never edited it,
+> the pull just removes it; `cp .env.example .env` to get it back.
 
 ```bash
 uv sync

@@ -145,11 +145,13 @@ class EntityGetTool:
     async def _get_account_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Advertiser details, enriched with the account's own clock and spend history.
 
-        ``include_spend_history`` costs three extra report calls, so the whole
-        payload is cached; the wall clock is recomputed from the cached
-        timezone on every call so it never goes stale.
+        ``include_spend_history`` costs three extra report calls, so it is
+        opt-in: an existing account_info read keeps making exactly one API
+        call. When it is on, the whole payload is cached; the wall clock is
+        recomputed from the cached timezone on every call so it never
+        goes stale.
         """
-        include_spend_history = args.get("include_spend_history", True)
+        include_spend_history = args.get("include_spend_history", False)
         cache_key = "account_info" if include_spend_history else "account_info_basic"
 
         cached = self.cache.get(cache_key)

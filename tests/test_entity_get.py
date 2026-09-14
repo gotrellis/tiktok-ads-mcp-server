@@ -153,7 +153,9 @@ class TestAccountInfo:
             report_response([]),
         ]
 
-        result = await tool.execute({"entity_type": "account_info"})
+        result = await tool.execute({
+            "entity_type": "account_info", "include_spend_history": True,
+        })
 
         advertiser = result["data"]["list"][0]
         assert advertiser["first_cost_day"] == "2026-01-15"
@@ -161,15 +163,21 @@ class TestAccountInfo:
         assert "now_based_on_timezone" in advertiser
         assert advertiser["create_time_readable"].startswith("20")
 
-    async def test_spend_history_can_be_skipped(self, tool, client):
+    async def test_spend_history_is_opt_in(self, tool, client):
+        """The default read must stay a single API call, as it was before."""
         client.responses = [advertiser_response()]
 
-        result = await tool.execute({
-            "entity_type": "account_info", "include_spend_history": False,
-        })
+        result = await tool.execute({"entity_type": "account_info"})
 
         assert client.endpoints() == ["advertiser/info/"]
         assert "first_cost_day" not in result["data"]["list"][0]
+
+    async def test_the_clock_is_added_even_without_spend_history(self, tool, client):
+        client.responses = [advertiser_response()]
+
+        result = await tool.execute({"entity_type": "account_info"})
+
+        assert "now_based_on_timezone" in result["data"]["list"][0]
 
     async def test_the_two_variants_do_not_share_a_cache_entry(self, tool, client):
         client.responses = [
@@ -180,8 +188,10 @@ class TestAccountInfo:
             report_response([]),
         ]
 
-        await tool.execute({"entity_type": "account_info", "include_spend_history": False})
-        result = await tool.execute({"entity_type": "account_info"})
+        await tool.execute({"entity_type": "account_info"})
+        result = await tool.execute({
+            "entity_type": "account_info", "include_spend_history": True,
+        })
 
         assert result.get("metadata", {}).get("cached") is not True
         assert client.endpoints().count("advertiser/info/") == 2
@@ -189,10 +199,8 @@ class TestAccountInfo:
     async def test_cached_reads_still_get_a_fresh_clock(self, tool, client):
         client.responses = [advertiser_response()]
 
-        await tool.execute({"entity_type": "account_info", "include_spend_history": False})
-        cached = await tool.execute({
-            "entity_type": "account_info", "include_spend_history": False,
-        })
+        await tool.execute({"entity_type": "account_info"})
+        cached = await tool.execute({"entity_type": "account_info"})
 
         assert cached["metadata"]["cached"] is True
         assert "now_based_on_timezone" in cached["data"]["list"][0]
@@ -202,9 +210,7 @@ class TestAccountInfo:
             advertiser_response(display_timezone="Mars/Olympus", timezone="Mars/Olympus"),
         ]
 
-        result = await tool.execute({
-            "entity_type": "account_info", "include_spend_history": False,
-        })
+        result = await tool.execute({"entity_type": "account_info"})
 
         assert result["success"] is True
         assert "now_based_on_timezone" in result["data"]["list"][0]
@@ -212,18 +218,14 @@ class TestAccountInfo:
     async def test_an_empty_advertiser_list_is_not_an_error(self, tool, client):
         client.responses = [{"code": 0, "data": {"list": []}}]
 
-        result = await tool.execute({
-            "entity_type": "account_info", "include_spend_history": False,
-        })
+        result = await tool.execute({"entity_type": "account_info"})
 
         assert result["success"] is True
 
     async def test_a_junk_create_time_is_dropped_not_fatal(self, tool, client):
         client.responses = [advertiser_response(create_time="not-a-timestamp")]
 
-        result = await tool.execute({
-            "entity_type": "account_info", "include_spend_history": False,
-        })
+        result = await tool.execute({"entity_type": "account_info"})
 
         assert result["success"] is True
         assert "create_time_readable" not in result["data"]["list"][0]

@@ -154,13 +154,13 @@ class TestSpendingDates:
 
 
 class TestAdvertiserInfo:
-    async def test_requests_the_documented_field_set(self, client):
+    async def test_does_not_narrow_the_returned_fields(self, client):
+        """No ``fields`` param — naming a subset would drop fields callers read."""
         await client.get_advertiser_info()
 
         params = client.calls[0]["params"]
         assert params["advertiser_ids"] == [client.advertiser_id]
-        assert "display_timezone" in params["fields"]
-        assert "currency" in params["fields"]
+        assert "fields" not in params
 
     async def test_explicit_advertiser_id_wins(self, client):
         await client.get_advertiser_info(advertiser_id="7000000000000000002")

@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from ..config import (
-    ADVERTISER_INFO_FIELDS,
     MAX_LOCATION_IDS_PER_REQUEST,
     MAX_PIXEL_IDS_PER_REQUEST,
 )
@@ -165,10 +164,13 @@ class MarketingClient(BaseAPIClient):
     # ── Account / Identity endpoints ────────────────────────────────────
 
     async def get_advertiser_info(self, advertiser_id: Optional[str] = None) -> Dict[str, Any]:
+        # No ``fields`` param on purpose: TikTok returns its full default set
+        # when it is omitted. Naming an explicit subset here would silently
+        # drop fields (balance, company, contact details, …) that callers of
+        # entity_get account_info may already be reading.
         target = advertiser_id or self.advertiser_id
         return await self.request("GET", "advertiser/info/", params={
             "advertiser_ids": [target],
-            "fields": ADVERTISER_INFO_FIELDS,
         })
 
     async def get_spending_dates(self, end_date: str, days: int = 90) -> Dict[str, Any]:

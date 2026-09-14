@@ -729,7 +729,7 @@ secondary_goal_result_rate	string	Deep funnel result rate	Percentage of deep fun
                     "date_range": {"type": "string", "enum": ["today", "yesterday", "last_3_days", "last_7_days", "last_14_days", "last_30_days", "last_60_days", "last_90_days", "this_month", "last_month"], "description": "Named date range for pixel_event_stats (default last_7_days)"},
                     "start_date": {"type": "string", "description": "Start date YYYY-MM-DD for pixel_event_stats (overrides date_range; must be paired with end_date)"},
                     "end_date": {"type": "string", "description": "End date YYYY-MM-DD for pixel_event_stats (overrides date_range; must be paired with start_date)"},
-                    "include_spend_history": {"type": "boolean", "description": "For account_info: include which days the account has spent in the last 90 days (default true; costs 3 extra report calls, cached for an hour)"},
+                    "include_spend_history": {"type": "boolean", "description": "For account_info: also report which days the account has spent in the last 90 days — useful for picking a report date range that is not empty. Default false because it costs 3 extra report calls; the result is cached for an hour."},
                 },
                 "required": ["entity_type"],
             }
