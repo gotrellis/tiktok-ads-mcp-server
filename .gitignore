@@ -8,8 +8,9 @@ build/
 # Virtual environment
 .venv/
 
-# Secrets
+# Secrets — .env.example is the tracked template
 .env
+.env.local
 
 # IDE
 .idea/
@@ -18,8 +19,8 @@ build/
 # macOS
 .DS_Store
 
-# Test files
-test_*.py
+# Test scratch files at the repo root only — tests/ is tracked
+/test_*.py
 
 # Claude Code
 .claude/

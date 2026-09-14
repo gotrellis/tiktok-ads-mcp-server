@@ -2,8 +2,14 @@
 
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from ..config import (
+    ADVERTISER_INFO_FIELDS,
+    MAX_LOCATION_IDS_PER_REQUEST,
+    MAX_PIXEL_IDS_PER_REQUEST,
+)
 from .base_client import BaseAPIClient
 
 logger = logging.getLogger(__name__)
@@ -158,19 +164,107 @@ class MarketingClient(BaseAPIClient):
 
     # ── Account / Identity endpoints ────────────────────────────────────
 
-    async def get_advertiser_info(self) -> Dict[str, Any]:
+    async def get_advertiser_info(self, advertiser_id: Optional[str] = None) -> Dict[str, Any]:
+        target = advertiser_id or self.advertiser_id
         return await self.request("GET", "advertiser/info/", params={
-            "advertiser_ids": [self.advertiser_id],
+            "advertiser_ids": [target],
+            "fields": ADVERTISER_INFO_FIELDS,
         })
+
+    async def get_spending_dates(self, end_date: str, days: int = 90) -> Dict[str, Any]:
+        """Find which days in the trailing window had advertiser-level spend.
+
+        TikTok caps a single ``report/integrated/get/`` window at 30 days, so
+        the window is walked in 30-day chunks. A chunk that fails is skipped
+        rather than failing the whole scan — a partial answer is still useful
+        for picking a report date range, which is what this feeds.
+
+        Returns ``{"first_date": str | None, "all_dates": [str]}``.
+        """
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        chunk = 30
+
+        rows: List[Dict[str, Any]] = []
+        for index in range((days + chunk - 1) // chunk):
+            chunk_end = end - timedelta(days=index * chunk)
+            chunk_start = chunk_end - timedelta(days=chunk)
+            try:
+                result = await self.request("GET", "report/integrated/get/", params={
+                    "report_type": "BASIC",
+                    "data_level": "AUCTION_ADVERTISER",
+                    "start_date": chunk_start.isoformat(),
+                    "end_date": chunk_end.isoformat(),
+                    "metrics": ["spend"],
+                    "dimensions": ["stat_time_day"],
+                    "page_size": 1000,
+                })
+            except Exception as e:  # noqa: BLE001 — partial results are still useful
+                logger.warning(
+                    "get_spending_dates: chunk %s..%s failed, skipping: %s",
+                    chunk_start, chunk_end, e,
+                )
+                continue
+            rows.extend(result.get("data", {}).get("list", []))
+
+        spend_days = set()
+        for row in rows:
+            try:
+                spend = float(row.get("metrics", {}).get("spend", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if spend <= 0:
+                continue
+            day = row.get("dimensions", {}).get("stat_time_day")
+            if day:
+                spend_days.add(str(day).split(" ")[0])
+
+        all_dates = sorted(spend_days)
+        return {"first_date": all_dates[0] if all_dates else None, "all_dates": all_dates}
 
     async def get_identities(self) -> Dict[str, Any]:
         return await self.request("GET", "identity/get/")
 
     # ── Pixel endpoints ─────────────────────────────────────────────────
 
-    async def get_pixels(self, page: int = 1, page_size: int = 20) -> Dict[str, Any]:
-        return await self.request("GET", "pixel/list/", params={
+    async def get_pixels(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        code: Optional[str] = None,
+        pixel_id: Optional[str] = None,
+        name: Optional[str] = None,
+        order_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
             "page": page, "page_size": min(page_size, 20),  # API max is 20
+        }
+        if code:
+            params["code"] = code
+        if pixel_id:
+            params["pixel_id"] = pixel_id
+        if name:
+            params["name"] = name
+        if order_by:
+            params["order_by"] = order_by
+        return await self.request("GET", "pixel/list/", params=params)
+
+    async def get_pixel_event_stats(
+        self,
+        pixel_ids: List[str],
+        start_date: str,
+        end_date: str,
+    ) -> Dict[str, Any]:
+        """Event counts per pixel for a date range (``pixel/event/stats/``)."""
+        if not pixel_ids:
+            raise ValueError("pixel_ids is required and cannot be empty")
+        if len(pixel_ids) > MAX_PIXEL_IDS_PER_REQUEST:
+            raise ValueError(
+                f"Maximum {MAX_PIXEL_IDS_PER_REQUEST} pixel IDs per request "
+                f"(got {len(pixel_ids)})"
+            )
+        return await self.request("GET", "pixel/event/stats/", params={
+            "pixel_ids": pixel_ids,
+            "date_range": {"start_date": start_date, "end_date": end_date},
         })
 
     # ── Audience / DMP endpoints ────────────────────────────────────────
@@ -375,6 +469,33 @@ class MarketingClient(BaseAPIClient):
 
     async def get_action_categories(self) -> Dict[str, Any]:
         return await self.request("GET", "tool/action_category/")
+
+    async def get_location_info(
+        self,
+        location_ids: List[str],
+        objective_type: str = "TRAFFIC",
+        placements: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Resolve targeting location IDs to names (``tool/targeting/info/``).
+
+        ``get_regions`` lists everything targetable; this resolves the handful
+        of IDs already sitting on an ad group, which is the common direction
+        when reading a campaign back.
+        """
+        if not location_ids:
+            raise ValueError("location_ids is required and cannot be empty")
+        if len(location_ids) > MAX_LOCATION_IDS_PER_REQUEST:
+            raise ValueError(
+                f"Maximum {MAX_LOCATION_IDS_PER_REQUEST} location IDs per request "
+                f"(got {len(location_ids)})"
+            )
+        return await self.request("POST", "tool/targeting/info/", data={
+            "advertiser_id": self.advertiser_id,
+            "scene": "GEO",
+            "targeting_ids": location_ids,
+            "objective_type": objective_type,
+            "placements": placements or ["PLACEMENT_TIKTOK"],
+        })
 
     async def get_targeting_recommend(self, option_type: str, country_code: Optional[str] = None) -> Dict[str, Any]:
         params: Dict[str, Any] = {"type": option_type}

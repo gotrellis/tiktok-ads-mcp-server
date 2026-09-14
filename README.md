@@ -85,6 +85,64 @@ Add to your MCP client configuration (e.g., Claude Desktop):
 - `tiktok_ads_get_campaign_performance` - Get performance metrics for campaigns with detailed metrics support
 - `tiktok_ads_get_adgroup_performance` - Get performance metrics for ad groups with breakdowns
 
+### Consolidated tools (this fork)
+
+Seven action-based tools cover the full surface, including writes. Upstream is
+read-only by design; **every write here returns a preview unless you pass
+`confirm=true`.**
+
+| Tool | Selector | Covers |
+|---|---|---|
+| `tiktok_entity_get` | `entity_type` | campaigns, adgroups, ads (+ details), `account_info`, `pixels`, `pixel_event_stats`, catalogs, product sets, `interest_categories`, `regions`, `location_info`, `action_categories`, identities, audiences, lead downloads, Business Center info/assets |
+| `tiktok_entity_manage` | `action` | create/update campaigns, ad groups and ads; enable/disable/delete in batch; create/update pixels; track events |
+| `tiktok_report` | `report_type` | performance, audience, catalog, GMV Max, plus async task create/check/download |
+| `tiktok_audience` | `action` | list, reach estimate, create CRM / lookalike / engagement audiences, delete |
+| `tiktok_creative` | `action` | list/search videos and images, uploads, Spark Ads authorization, AI ad text |
+| `tiktok_comment` | `action` | list, reply, hide/unhide |
+| `tiktok_intelligence` | `analysis_type` | `funnel_overview`, `anomaly_check`, `optimization_actions`, `scaling_readiness`, `wasted_spend_audit`, plus interest/region/behaviour targeting lookups |
+
+Requests are validated against `constraints.json` and the validators in
+`validators/` before they reach TikTok — objective/optimization-goal pairs,
+billing events, placement rules and CTA restrictions are captured from live
+v1.3 API responses rather than TikTok's documentation, which disagrees with
+the API in several places.
+
+#### Diagnosing spend that isn't converting
+
+`tiktok_intelligence` with `analysis_type="wasted_spend_audit"` ranks
+zero-conversion campaigns (and, for the worst offenders, their ad groups) by
+money at risk. Each finding carries a likely cause, a confidence level, and one
+of three recommendations — `pause_or_reduce`, `keep_small_retest_budget`,
+`needs_more_data`. Thresholds (`min_spend`, `min_clicks`, `high_ctr`,
+`high_cpc`) are all overridable.
+
+Zero conversions often means broken tracking rather than a bad campaign, so
+cross-check with `tiktok_entity_get` `entity_type="pixel_event_stats"`: pixel
+events far below reported conversions points at the pixel, not the creative.
+
+## Development
+
+Copy `.env.example` to `.env` and fill in your TikTok app credentials — `.env`
+is gitignored and must never be committed.
+
+```bash
+uv sync
+uv run pytest
+```
+
+The `mcp` dependency is capped at `<2.0.0`: `mcp` 2.x removed the
+`Server.list_tools()` decorator this server registers its handlers with, so
+importing `server.py` fails under 2.x. `tests/test_server_schema.py` imports
+the server and cross-checks every declared enum value against its handler, so
+both that incompatibility and a schema/handler drift fail the suite.
+
+## Relationship to upstream
+
+This is a fork of [AdsMCP/tiktok-ads-mcp-server](https://github.com/AdsMCP/tiktok-ads-mcp-server),
+branched at upstream's 2025-10-20 commit. Upstream rewrote its history
+afterwards, so the two share no merge base and cannot be merged directly —
+changes are ported across by hand in either direction.
+
 ## Authentication
 
 ### TikTok Ads API Setup

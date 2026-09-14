@@ -2,16 +2,20 @@
 
 Supported entity_type values:
   campaigns, campaign_details, adgroups, adgroup_details, ads, ad_details,
-  account_info, pixels, catalogs, catalog_products, product_sets,
-  interest_categories, regions, action_categories, identities, audiences,
-  lead_download_task, lead_download, bc_info, bc_assets
+  account_info, pixels, pixel_event_stats, catalogs, catalog_products,
+  product_sets, interest_categories, regions, location_info,
+  action_categories, identities, audiences, lead_download_task,
+  lead_download, bc_info, bc_assets
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from ..api.marketing_client import MarketingClient
 from ..cache.cache_manager import CacheManager
+from ..utils.date_helpers import resolve_date_range, validate_date_string
 
 logger = logging.getLogger(__name__)
 
@@ -139,22 +143,83 @@ class EntityGetTool:
         return _success(items[0])
 
     async def _get_account_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        cached = self.cache.get("account_info")
+        """Advertiser details, enriched with the account's own clock and spend history.
+
+        ``include_spend_history`` costs three extra report calls, so the whole
+        payload is cached; the wall clock is recomputed from the cached
+        timezone on every call so it never goes stale.
+        """
+        include_spend_history = args.get("include_spend_history", True)
+        cache_key = "account_info" if include_spend_history else "account_info_basic"
+
+        cached = self.cache.get(cache_key)
         if cached:
-            return _success(cached, metadata={"cached": True})
+            return _success(_with_account_clock(cached), metadata={"cached": True})
+
         result = await self.client.get_advertiser_info()
         data = result.get("data", {})
-        self.cache.set("account_info", data)
-        return _success(data)
+        advertisers = data.get("list", [])
+
+        if advertisers and include_spend_history:
+            advertiser = advertisers[0]
+            today = _account_now(advertiser).strftime("%Y-%m-%d")
+            spending = await self.client.get_spending_dates(today)
+            advertiser["first_cost_day"] = spending["first_date"]
+            advertiser["all_cost_days"] = spending["all_dates"]
+
+        self.cache.set(cache_key, data)
+        return _success(_with_account_clock(data))
 
     async def _get_pixels(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        cached = self.cache.get("pixels")
-        if cached:
-            return _success(cached, metadata={"cached": True})
-        result = await self.client.get_pixels()
+        filters = {
+            k: args[k] for k in ("code", "pixel_id", "name", "order_by") if args.get(k)
+        }
+        # Only the unfiltered listing is worth caching.
+        if not filters:
+            cached = self.cache.get("pixels")
+            if cached:
+                return _success(cached, metadata={"cached": True})
+
+        result = await self.client.get_pixels(**filters)
         items = result.get("data", {}).get("list", [])
-        self.cache.set("pixels", items)
+        if not filters:
+            self.cache.set("pixels", items)
         return _success(items)
+
+    async def _get_pixel_event_stats(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        pixel_ids = args.get("pixel_ids")
+        if not pixel_ids:
+            return _error(
+                "pixel_ids is required for pixel_event_stats",
+                suggestion="Use entity_type='pixels' to list the account's pixels first.",
+            )
+
+        try:
+            start_date, end_date = _resolve_window(args)
+        except ValueError as e:
+            return _error(str(e))
+
+        result = await self.client.get_pixel_event_stats(
+            pixel_ids=pixel_ids, start_date=start_date, end_date=end_date,
+        )
+        return _success(
+            result.get("data", {}),
+            metadata={"start_date": start_date, "end_date": end_date},
+        )
+
+    async def _get_location_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        location_ids = args.get("location_ids")
+        if not location_ids:
+            return _error(
+                "location_ids is required for location_info",
+                suggestion="Use tiktok_intelligence analysis_type='regions' to browse targetable locations.",
+            )
+        result = await self.client.get_location_info(
+            location_ids=location_ids,
+            objective_type=args.get("objective_type", "TRAFFIC"),
+            placements=args.get("placements"),
+        )
+        return _success(result.get("data", {}))
 
     async def _get_catalogs(self, args: Dict[str, Any]) -> Dict[str, Any]:
         bc_id = args.get("bc_id")
@@ -285,6 +350,8 @@ class EntityGetTool:
         "ad_details": _get_ad_details,
         "account_info": _get_account_info,
         "pixels": _get_pixels,
+        "pixel_event_stats": _get_pixel_event_stats,
+        "location_info": _get_location_info,
         "catalogs": _get_catalogs,
         "catalog_products": _get_catalog_products,
         "product_sets": _get_product_sets,
@@ -299,6 +366,55 @@ class EntityGetTool:
         "bc_info": _get_bc_info,
         "bc_assets": _get_bc_assets,
     }
+
+
+# ── Account clock helpers ───────────────────────────────────────────────
+
+def _account_now(advertiser: Dict[str, Any]) -> datetime:
+    """Current time in the advertiser's own timezone, falling back to UTC.
+
+    Dates in TikTok reports are stamped in the account timezone, so 'today'
+    computed from the server clock can be a day off.
+    """
+    name = advertiser.get("display_timezone") or advertiser.get("timezone") or "UTC"
+    try:
+        tz = ZoneInfo(name)
+    except Exception:  # noqa: BLE001 — unknown/missing tzdata name
+        logger.warning("Unknown advertiser timezone %r, falling back to UTC", name)
+        tz = timezone.utc
+    return datetime.now(tz)
+
+
+def _with_account_clock(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Stamp the advertiser record with its local 'now' and a readable create time."""
+    advertisers = data.get("list") or []
+    if not advertisers:
+        return data
+
+    advertiser = advertisers[0]
+    now = _account_now(advertiser)
+    advertiser["now_based_on_timezone"] = now.strftime("%Y-%m-%d %H:%M")
+
+    create_time = advertiser.get("create_time")
+    if create_time:
+        try:
+            advertiser["create_time_readable"] = datetime.fromtimestamp(
+                int(create_time), now.tzinfo
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, OSError, OverflowError):
+            pass
+    return data
+
+
+def _resolve_window(args: Dict[str, Any]) -> tuple[str, str]:
+    """Resolve explicit start/end dates, else a named date_range (default last_7_days)."""
+    start_date = args.get("start_date")
+    end_date = args.get("end_date")
+    if start_date and end_date:
+        return validate_date_string(start_date), validate_date_string(end_date)
+    if start_date or end_date:
+        raise ValueError("start_date and end_date must be provided together")
+    return resolve_date_range(args.get("date_range", "last_7_days"))
 
 
 # ── Response helpers ────────────────────────────────────────────────────
