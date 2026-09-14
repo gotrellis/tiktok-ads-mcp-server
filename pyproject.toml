@@ -22,7 +22,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    # Cap below 2.0: the MCP SDK 2.x rewrite removed the lowlevel Server decorators this
+    # server is built on (@app.list_tools / @app.call_tool), so it fails at import there.
+    "mcp>=1.0.0,<2.0.0",
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
