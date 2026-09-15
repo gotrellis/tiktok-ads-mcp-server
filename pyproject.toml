@@ -22,7 +22,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "mcp>=1.0.0,<2.0.0",  # 2.x removed Server.list_tools
+    # Floor is 2.0 because server.py registers its handlers through the Server
+    # constructor (on_list_tools / on_call_tool); 1.x had decorators instead
+    # and cannot run this code. clio-idx installs this package into its own
+    # virtualenv, so this range is what clio-idx resolves too — it moved to
+    # mcp 2.x with fastmcp 4 in the same release that introduced this pin.
+    "mcp>=2.0.0,<3.0.0",
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",

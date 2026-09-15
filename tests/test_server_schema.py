@@ -1,8 +1,13 @@
 """Smoke tests for the MCP surface itself.
 
-Importing ``tiktok_ads_mcp.server`` runs the ``@app.list_tools()`` decorator, so
-these also fail loudly if the installed ``mcp`` SDK drops the 1.x decorator API
-the server is written against.
+Importing ``tiktok_ads_mcp.server`` constructs ``app`` with its handlers, so
+these also fail loudly if the handler wiring stops matching the installed
+``mcp`` SDK.
+
+Note the snake_case attribute reads (``tool.input_schema``): mcp 2.x renamed
+the model fields and kept camelCase only as the serialization alias, so the
+tool table still *builds* tools with ``inputSchema=`` but reads use the new
+spelling.
 """
 
 import pytest
@@ -21,7 +26,7 @@ async def tools_by_name(tools):
 
 
 def enum_of(tool, field):
-    return tool.inputSchema["properties"][field]["enum"]
+    return tool.input_schema["properties"][field]["enum"]
 
 
 class TestToolSurface:
@@ -36,7 +41,7 @@ class TestToolSurface:
     async def test_every_tool_has_a_description_and_schema(self, tools):
         for tool in tools:
             assert tool.description, f"{tool.name} has no description"
-            assert tool.inputSchema.get("type") == "object", tool.name
+            assert tool.input_schema.get("type") == "object", tool.name
 
     async def test_tool_names_are_unique(self, tools):
         names = [tool.name for tool in tools]
@@ -55,13 +60,13 @@ class TestNewOptionsAreExposed:
         )
 
     async def test_the_new_entity_types_have_their_parameters_declared(self, tools_by_name):
-        properties = tools_by_name["tiktok_entity_get"].inputSchema["properties"]
+        properties = tools_by_name["tiktok_entity_get"].input_schema["properties"]
         for field in ("pixel_ids", "location_ids", "start_date", "end_date",
                       "include_spend_history"):
             assert field in properties, field
 
     async def test_the_audit_thresholds_are_declared(self, tools_by_name):
-        properties = tools_by_name["tiktok_intelligence"].inputSchema["properties"]
+        properties = tools_by_name["tiktok_intelligence"].input_schema["properties"]
         for field in ("min_spend", "min_clicks", "high_ctr", "high_cpc",
                       "include_adgroup_breakdown", "max_adgroup_campaigns"):
             assert field in properties, field
