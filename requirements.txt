@@ -1,5 +1,5 @@
 # MCP (Model Context Protocol) core
-mcp>=1.0.0,<2.0.0  # 2.x removed Server.list_tools; server.py targets the 1.x decorator API
+mcp>=2.0.0,<3.0.0  # server.py targets the 2.x constructor handler API — see pyproject
 
 # HTTP client for TikTok API requests
 httpx>=0.25.0

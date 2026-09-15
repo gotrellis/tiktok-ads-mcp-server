@@ -5,24 +5,12 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from mcp.server import Server
-from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import (
-    CallToolRequest,
-    CallToolResult,
-    ListToolsRequest,
-    ListToolsResult,
-    ServerCapabilities,
-    TextContent,
-    Tool,
-    ToolsCapability,
-    LoggingCapability,
-)
-from pydantic import BaseModel
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from .tiktok_client import TikTokAdsClient
 from .oauth_simple import SimpleTikTokOAuth, start_manual_oauth
@@ -48,8 +36,8 @@ from .tools.intelligence import IntelligenceTool
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize MCP server
-app = Server("tiktok-ads-mcp")
+SERVER_NAME = "tiktok-ads-mcp"
+SERVER_VERSION = "1.0.0"
 
 
 class TikTokMCPServer:
@@ -286,7 +274,6 @@ class TikTokMCPServer:
 tiktok_server = TikTokMCPServer()
 
 
-@app.list_tools()
 async def list_tools() -> List[Tool]:
     """List all available TikTok Ads tools."""
     tools = []
@@ -1044,7 +1031,6 @@ def _sanitize_arguments(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized
 
 
-@app.call_tool()
 async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
     """Handle tool calls for TikTok Ads operations."""
     try:
@@ -1152,6 +1138,36 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         )]
 
 
+# mcp 2.x takes the handlers on the constructor, so ``app`` is built here,
+# below them, rather than at the top of the module. Nothing above this line
+# refers to it.
+async def _on_list_tools(ctx: Any, params: Any) -> ListToolsResult:
+    return ListToolsResult(tools=await list_tools())
+
+
+async def _on_call_tool(ctx: Any, params: Any) -> CallToolResult:
+    # ``call_tool`` above catches nearly everything itself and reports errors as
+    # ordinary text, so this mostly just wraps the payload. The except arm still
+    # matters: under mcp 1.x the SDK turned an escaped exception into
+    # CallToolResult(isError=True, text=str(exc)), and 2.x instead emits a
+    # JSON-RPC INTERNAL_ERROR with the message replaced by a generic string.
+    # clio-idx reads isError to detect a failed call, so keep producing it here.
+    try:
+        return CallToolResult(content=await call_tool(params.name, params.arguments or {}))
+    except Exception as exc:
+        logger.exception("tool %s failed", params.name)
+        text = str(exc) or type(exc).__name__
+        return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
+
+
+app = Server(
+    SERVER_NAME,
+    version=SERVER_VERSION,
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
+
+
 async def main(transport: str = "stdio", port: int = 8000):
     """Main entry point for the TikTok Ads MCP server."""
     try:
@@ -1178,17 +1194,14 @@ async def main(transport: str = "stdio", port: int = 8000):
         else:
             # Default: stdio transport
             async with stdio_server() as (read_stream, write_stream):
+                # Capabilities derived from the handlers actually registered.
+                # The old literal claimed tools/listChanged and a logging
+                # capability; this server sends neither notification and has no
+                # logging/setLevel handler, and 2.x deprecated that capability.
                 await app.run(
                     read_stream,
                     write_stream,
-                    InitializationOptions(
-                        server_name="tiktok-ads-mcp",
-                        server_version="1.0.0",
-                        capabilities=ServerCapabilities(
-                            tools=ToolsCapability(listChanged=True),
-                            logging=LoggingCapability()
-                        )
-                    )
+                    app.create_initialization_options(),
                 )
     except Exception as e:
         logger.error(f"Server failed to start: {e}")
